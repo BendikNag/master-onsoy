@@ -347,7 +347,7 @@ def get_player_name_map(data):
     
     return player_name_map
 
-def get_fantasy_totals_by_picker(fantasy_pickers, all_rounds_scores, player_name_map):
+def get_fantasy_totals_by_picker(fantasy_pickers, wildcard_picks, all_rounds_scores, player_name_map):
     """Calculate total fantasy points for each fantasy picker and their players"""
     fantasy_totals = {}
     
@@ -355,6 +355,7 @@ def get_fantasy_totals_by_picker(fantasy_pickers, all_rounds_scores, player_name
         picker_total = 0
         player_details = {}
         
+        # Original player scoring (all rounds)
         for player_id in player_ids:
             player_total = 0
             round_details = {}
@@ -369,9 +370,32 @@ def get_fantasy_totals_by_picker(fantasy_pickers, all_rounds_scores, player_name
             player_name = player_name_map.get(player_id, f"Player {player_id}")
             player_details[player_name] = {
                 "total": player_total,
-                "rounds": round_details
+                "rounds": round_details,
+                "is_wildcard": False
             }
             picker_total += player_total
+        
+        # Wildcard player scoring (only rounds 3 and 4)
+        if picker_name in wildcard_picks:
+            for player_id in wildcard_picks[picker_name]:
+                player_total = 0
+                round_details = {}
+                
+                # Only include rounds 3 and 4 for wildcards
+                for round_num in [3, 4]:
+                    if round_num in all_rounds_scores and player_id in all_rounds_scores[round_num]:
+                        points = all_rounds_scores[round_num][player_id]["fantasy_score"]
+                        player_total += points
+                        round_details[round_num] = points
+                
+                player_name = player_name_map.get(player_id, f"Player {player_id}")
+                wildcard_label = f"{player_name} (WC)"
+                player_details[wildcard_label] = {
+                    "total": player_total,
+                    "rounds": round_details,
+                    "is_wildcard": True
+                }
+                picker_total += player_total
         
         fantasy_totals[picker_name] = {
             "total": picker_total,
@@ -415,20 +439,25 @@ def format_to_par(value):
         return str(value)
 
 # Function to display player detail cards
-def display_player_card(player_info, round_scores, tournament_status):
+def display_player_card(player_info, round_scores, tournament_status, is_wildcard=False):
     """Display a player's card with all their tournament information
     
     Args:
         player_info (dict): Player information dictionary
         round_scores (dict): Dictionary of round scores
         tournament_status (str): Tournament status
+        is_wildcard (bool): Whether this player is a wildcard pick
     """
     if not player_info:
         return
     
     # Create a card-like container
     with st.container():
-        st.subheader(player_info["name"]["full_name"])
+        # Add a wildcard badge if applicable
+        if is_wildcard:
+            st.subheader(f"{player_info['name']['full_name']} 🃏 (Wildcard)")
+        else:
+            st.subheader(player_info["name"]["full_name"])
         
         col1, col2, col3 = st.columns([1, 1, 2])
         
@@ -467,6 +496,10 @@ def display_player_card(player_info, round_scores, tournament_status):
                 round_status = round_data["status"]
                 round_total = round_data["total"]
                 
+                # Skip rounds 1-2 for wildcards
+                if is_wildcard and round_num < 3:
+                    continue
+                
                 st.markdown(f"**Round {round_num}:** {round_total} ({round_status})")
         
         with col3:
@@ -474,6 +507,10 @@ def display_player_card(player_info, round_scores, tournament_status):
             
             fantasy_data = []
             for round_num in range(1, 5):
+                # Skip rounds 1-2 for wildcards
+                if is_wildcard and round_num < 3:
+                    continue
+                    
                 player_id = player_info["player_id"]
                 if player_id in round_scores.get(round_num, {}):
                     round_fantasy = round_scores[round_num][player_id]
@@ -496,6 +533,10 @@ def display_player_card(player_info, round_scores, tournament_status):
                 # Display bonus information
                 bonuses = []
                 for round_num in range(1, 5):
+                    # Skip rounds 1-2 for wildcards
+                    if is_wildcard and round_num < 3:
+                        continue
+                        
                     player_id = player_info["player_id"]
                     if player_id in round_scores.get(round_num, {}):
                         round_fantasy = round_scores[round_num][player_id]
@@ -519,6 +560,10 @@ def display_player_card(player_info, round_scores, tournament_status):
         player_id = player_info["player_id"]
         
         for round_num in range(1, 5):
+            # Skip rounds 1-2 for wildcards
+            if is_wildcard and round_num < 3:
+                continue
+                
             if player_id in round_scores.get(round_num, {}):
                 round_data = round_scores[round_num][player_id]
                 
@@ -615,7 +660,7 @@ def display_player_card(player_info, round_scores, tournament_status):
         st.markdown("---")
 
 # Function to create a round-by-round leaderboard
-def create_round_leaderboard(fantasy_pickers, round_scores, player_name_map):
+def create_round_leaderboard(fantasy_pickers, wildcard_picks, round_scores, player_name_map, round_num):
     """Create a leaderboard DataFrame for a specific round"""
     leaderboard_data = []
     
@@ -623,13 +668,24 @@ def create_round_leaderboard(fantasy_pickers, round_scores, player_name_map):
         picker_total = 0
         player_scores = []
         
+        # Regular players
         for player_id in player_ids:
             if player_id in round_scores:
                 player_score = round_scores[player_id]["fantasy_score"]
                 picker_total += player_score
                 
                 player_name = player_name_map.get(player_id, f"Player {player_id}")
-                player_scores.append((player_name, player_score))
+                player_scores.append((player_name, player_score, False))
+        
+        # Wildcard players (only for rounds 3-4)
+        if round_num >= 3 and picker_name in wildcard_picks:
+            for player_id in wildcard_picks[picker_name]:
+                if player_id in round_scores:
+                    player_score = round_scores[player_id]["fantasy_score"]
+                    picker_total += player_score
+                    
+                    player_name = player_name_map.get(player_id, f"Player {player_id}")
+                    player_scores.append((f"{player_name}", player_score, True))
         
         leaderboard_data.append({
             "Fantasy Picker": picker_name,
@@ -683,11 +739,28 @@ fantasy_pickers = {
     "Aksel": ["34360", "46717", "45523", "36689"]
 }
 
-# Flatten player IDs for data fetching
+# Define wildcard picks for rounds 3-4
+wildcard_picks = {
+    "Fredrik": ["47995"],  # Add player IDs for Fredrik's wildcards
+    "Viktor": ["59141"],   # Add player IDs for Viktor's wildcards
+    "Bendik": ["40098"],   # Add player IDs for Bendik's wildcards
+    "Thomas": ["26331"],   # Add player IDs for Thomas's wildcards
+    "Haugstvedt": ["25804"],  # Add player IDs for Haugstvedt's wildcards
+    "BH": ["22405"],      # Add player IDs for BH's wildcards
+    "Aksel": ["39997", "51349"]     # Add player IDs for Aksel's wildcards
+}
+
+# Flatten player IDs for data fetching (include wildcards)
 player_ids_flatten = []
 for picker, ids in fantasy_pickers.items():
     for player_id in ids:
         player_ids_flatten.append(player_id)
+
+# Add wildcard players to the flattened list
+for picker, ids in wildcard_picks.items():
+    for player_id in ids:
+        if player_id not in player_ids_flatten:
+            player_ids_flatten.append(player_id)
 
 # Add a function to create a cache key based on current time
 @st.cache_data(ttl=300)  # Cache for 5 minutes
@@ -723,11 +796,11 @@ try:
     player_name_map = get_player_name_map(data)
     
     # Calculate fantasy totals by picker
-    fantasy_totals = get_fantasy_totals_by_picker(fantasy_pickers, all_rounds_scores, player_name_map)
+    fantasy_totals = get_fantasy_totals_by_picker(fantasy_pickers, wildcard_picks, all_rounds_scores, player_name_map)
     
     # Create sidebar for navigation
     st.sidebar.title("Navigation")
-    page = st.sidebar.radio("Select Page", ["Overview", "Team Details"])
+    page = st.sidebar.radio("Select Page", ["Overview", "Team Details", "Wildcards"])
     
     # Display the selected page
     if page == "Overview":
@@ -757,8 +830,10 @@ try:
         st.subheader(f"Round {current_round} Leaderboard")
         current_round_leaderboard = create_round_leaderboard(
             fantasy_pickers, 
+            wildcard_picks if current_round >= 3 else {},  # Only include wildcards in rounds 3-4
             all_rounds_scores.get(current_round, {}), 
-            player_name_map
+            player_name_map,
+            current_round
         )
         
         # Display the leaderboard
@@ -775,8 +850,9 @@ try:
             st.markdown(f"**{picker}**: {total} points")
             
             # Create a formatted list of player scores
-            for player_name, score in player_details:
-                st.markdown(f"- {player_name}: {score} points")
+            for player_name, score, is_wildcard in player_details:
+                wildcard_tag = " (Wildcard)" if is_wildcard else ""
+                st.markdown(f"- {player_name}{wildcard_tag}: {score} points")
             
             st.markdown("---")
         
@@ -794,9 +870,11 @@ try:
                 for player_name, player_data in picker_data["players"].items():
                     player_total = player_data["total"]
                     rounds = player_data["rounds"]
+                    is_wildcard = player_data["is_wildcard"]
                     
+                    wildcard_tag = " (Wildcard - Rounds 3-4 only)" if is_wildcard else ""
                     round_details = ", ".join([f"R{r}: {pts}" for r, pts in rounds.items()])
-                    st.markdown(f"**{player_name}**: {player_total} points ({round_details})")
+                    st.markdown(f"**{player_name}{wildcard_tag}**: {player_total} points ({round_details})")
                     
     elif page == "Team Details":
         st.header("Team Details")
@@ -814,52 +892,67 @@ try:
             # Get the team's player IDs
             player_ids = fantasy_pickers[selected_team]
             
+            # Get the wildcard player IDs if available
+            wildcard_ids = wildcard_picks.get(selected_team, [])
+            
             # Get and display total team points
             team_total = fantasy_totals[selected_team]["total"]
             st.markdown(f"### Total Team Points: {team_total}")
             
             # Create a bar chart showing points by player
             player_points = {}
+            wildcard_status = {}
             for player_name, player_data in fantasy_totals[selected_team]["players"].items():
                 player_points[player_name] = player_data["total"]
+                wildcard_status[player_name] = player_data["is_wildcard"]
             
             player_df = pd.DataFrame({
                 "Player": list(player_points.keys()),
-                "Fantasy Points": list(player_points.values())
+                "Fantasy Points": list(player_points.values()),
+                "Is Wildcard": [wildcard_status[name] for name in player_points.keys()]
             })
             
             # Sort by points (descending)
             player_df = player_df.sort_values(by="Fantasy Points", ascending=False)
             
-            # Create a bar chart
+            # Create a bar chart with color distinction for wildcards
             fig = px.bar(
                 player_df, 
                 x="Player", 
                 y="Fantasy Points", 
                 title=f"{selected_team}'s Players Performance",
-                color="Fantasy Points",
-                color_continuous_scale="Viridis"
+                color="Is Wildcard",
+                color_discrete_map={True: "gold", False: "blue"},
+                labels={"Is Wildcard": "Wildcard Pick"}
             )
             
             # Display the chart
             st.plotly_chart(fig, use_container_width=True)
             
-            # Display detailed player information
-            st.subheader("Player Details")
+            # Display detailed player information for regular picks
+            st.subheader("Regular Team")
             
             # For each player in the team
-            for i, player_id in enumerate(player_ids):
+            for player_id in player_ids:
                 # Get player information
                 player_info = get_player_information(player_id, data)
-                
-                # Only show emoji legend for the last player
-                is_last_player = (i == len(player_ids) - 1)
                 
                 # Display player card
                 display_player_card(player_info, all_rounds_scores, data["data"]["statusRound"])
             
-                            # Only show the emoji legend if requested
-
+            # Display detailed player information for wildcard picks
+            if wildcard_ids:
+                st.subheader("Wildcard Picks (Rounds 3-4 Only)")
+                
+                # For each wildcard player
+                for player_id in wildcard_ids:
+                    # Get player information
+                    player_info = get_player_information(player_id, data)
+                    
+                    # Display player card with wildcard flag
+                    display_player_card(player_info, all_rounds_scores, data["data"]["statusRound"], is_wildcard=True)
+            
+            # Show emoji legend
             st.markdown("""
             **Score Indicators:**  
             🐥 = Birdie\n
@@ -870,6 +963,82 @@ try:
             💩 = Double bogey or worse
             """)
             
+    elif page == "Wildcards":
+        st.header("Wildcard Picks")
+        
+        st.markdown("""
+        ### Wildcard Rules
+        - Each fantasy picker can select two wildcard players for Rounds 3 and 4
+        - Wildcard players only score points for Rounds 3 and 4
+        """)
+        
+        # Create a table showing all wildcard selections
+        wildcard_data = []
+        for picker_name, picker_wildcards in wildcard_picks.items():
+            player_names = [player_name_map.get(player_id, f"Player {player_id}") for player_id in picker_wildcards]
+            
+            # Calculate points from wildcard picks
+            wildcard_points = 0
+            if picker_name in fantasy_totals:
+                for player_name, player_data in fantasy_totals[picker_name]["players"].items():
+                    if player_data["is_wildcard"]:
+                        wildcard_points += player_data["total"]
+            
+            wildcard_data.append({
+                "Fantasy Picker": picker_name,
+                "Wildcard Picks": ", ".join(player_names),
+                "Wildcard Points": wildcard_points
+            })
+        
+        # Sort by wildcard points (descending)
+        wildcard_df = pd.DataFrame(wildcard_data).sort_values(by="Wildcard Points", ascending=False)
+        
+        # Display the wildcard table
+        st.dataframe(wildcard_df, hide_index=True)
+        
+        # Create a bar chart for wildcard performance
+        st.subheader("Wildcard Performance by Fantasy Picker")
+        
+        fig = px.bar(
+            wildcard_df,
+            x="Fantasy Picker",
+            y="Wildcard Points",
+            title="Points From Wildcard Picks (Rounds 3-4)",
+            color="Wildcard Points",
+            color_continuous_scale="Viridis"
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Detailed breakdown of individual wildcard players
+        st.subheader("All Wildcard Picks")
+        
+        # Get unique wildcard player IDs
+        unique_wildcard_players = set()
+        for wildcards in wildcard_picks.values():
+            for player_id in wildcards:
+                unique_wildcard_players.add(player_id)
+        
+        # Calculate total points for each wildcard player
+        wildcard_player_points = {}
+        for player_id in unique_wildcard_players:
+            player_name = player_name_map.get(player_id, f"Player {player_id}")
+            
+            # Calculate points for rounds 3-4
+            total_points = 0
+            for round_num in [3, 4]:
+                if round_num in all_rounds_scores and player_id in all_rounds_scores[round_num]:
+                    total_points += all_rounds_scores[round_num][player_id]["fantasy_score"]
+            
+            wildcard_player_points[player_name] = total_points
+        
+        # Create a dataframe and display
+        wildcard_player_df = pd.DataFrame({
+            "Player": list(wildcard_player_points.keys()),
+            "Fantasy Points (Rounds 3-4)": list(wildcard_player_points.values())
+        }).sort_values(by="Fantasy Points (Rounds 3-4)", ascending=False)
+        
+        st.dataframe(wildcard_player_df, hide_index=True)
         
 except Exception as e:
     st.error(f"An error occurred: {str(e)}")
